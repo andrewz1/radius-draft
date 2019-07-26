@@ -99,11 +99,9 @@ func ParsePacket(buf []byte) (pkt *Packet, err error) {
 			vmap[vid] = struct{}{}
 		}
 	}
-	pkt.vids = make([]VendorID, len(vmap))
-	i := 0
+	pkt.vids = make([]VendorID, 0, len(vmap))
 	for v := range vmap {
-		pkt.vids[i] = v
-		i++
+		pkt.vids = append(pkt.vids, v)
 	}
 	return
 }
