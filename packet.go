@@ -50,8 +50,10 @@ type Packet struct {
 func ParsePacket(buf []byte) (pkt *Packet, err error) {
 	var (
 		pl   int                   // packet len
+		pd   []byte                // packet raw data
 		rb   *rBuf                 // read buffer
-		at   AttrType              // attr type
+		at   byte                  // attr type
+		ad   []byte                // attr data
 		vid  VendorID              // vendor id
 		vmap map[VendorID]struct{} // map for VSA
 	)
@@ -60,18 +62,24 @@ func ParsePacket(buf []byte) (pkt *Packet, err error) {
 		err = errors.New("Packet too short")
 		return
 	}
-	if pl = int(binary.BigEndian.Uint16(buf[2:])); pl < len(buf) {
+	pl = int(binary.BigEndian.Uint16(buf[2:]))
+	if pl < MinPLen || pl > MaxPLen || pl > len(buf) {
 		err = errors.New("Packet len error")
 		return
 	}
-	rb = newBuf(buf[:pl])
+	pd = append([]byte(nil), buf[:pl]...)
+	pkt = &Packet{
+		code: RadiusCode(pd[0]),
+		id:   pd[1],
+		len:  uint16(pl),
+		auth: pd[4:20],
+		data: pd,
+	}
+	if pl == MinPLen {
+		return
+	}
+	rb = newBuf(pd)
 	defer func() {
-		var ok bool
-		if r := recover(); r != nil {
-			if err, ok = r.(error); !ok {
-				err = errors.New("Panic in ParsePacket")
-			}
-		}
 		if err != nil && pkt != nil {
 			for _, a := range pkt.attrs {
 				a.pkt = nil // remove any ref to packet data
@@ -79,21 +87,15 @@ func ParsePacket(buf []byte) (pkt *Packet, err error) {
 			pkt = nil
 		}
 	}()
-	pkt = &Packet{
-		code: RadiusCode(rb.getByte()),
-		id:   rb.getByte(),
-		len:  rb.getUInt16(),
-		auth: rb.getBytes(16),
-		data: rb.getBuf(),
-	}
 	vmap = make(map[VendorID]struct{})
 	for rb.getLeft() >= 2 {
-		if at = AttrType(rb.getByte()); at != AttrVSA { // plain attr
-			if err = pkt.parseAttr(at, rb); err != nil {
-				return
-			}
+		if at, ad, err = rb.getAttr(); err != nil {
+			return
+		}
+		if AttrType(at) != AttrVSA { // plain attr
+			pkt.parseAttr(AttrType(at), ad)
 		} else { // VSA
-			if vid, err = pkt.parseVSA(rb); err != nil {
+			if vid, err = pkt.parseVSA(ad); err != nil {
 				return
 			}
 			vmap[vid] = struct{}{}
@@ -106,104 +108,58 @@ func ParsePacket(buf []byte) (pkt *Packet, err error) {
 	return
 }
 
-func (p *Packet) parseAttr(at AttrType, rb *rBuf) (err error) {
-	var (
-		al    byte      // attr len
-		alInt int       // calculated attr len
-		ad    *AttrData // attr data
-		tg    byte      // attr tag
-	)
+func (p *Packet) parseAttr(at AttrType, ad []byte) {
+	var attr *Attr // attribute
 
-	defer func() {
-		var ok bool
-		if r := recover(); r != nil {
-			if err, ok = r.(error); !ok {
-				err = errors.New("Panic in parseAttr")
-			}
-		}
-	}()
-	al = rb.getByte()
-	if alInt = int(al) - 2; alInt < 0 {
-		err = errors.New("Attr len error")
-		return
-	}
-	ad = GetAttrByAttr(at)
-	tg = 0
-	if ad.IsTagged() {
-		tg = rb.getByte()
-		if alInt--; alInt < 0 {
-			err = errors.New("Attr len error")
-			return
-		}
-	}
-	p.attrs = append(p.attrs, &Attr{
+	attr = &Attr{
 		atype: at,
-		alen:  al,
-		tag:   tg,
-		data:  rb.getBytes(alInt),
-		ad:    ad,
+		alen:  byte(len(ad) + 2),
+		ad:    GetAttrByAttr(at),
 		pkt:   p,
-	})
-	return
+	}
+	if attr.ad != nil && attr.ad.IsTagged() {
+		attr.tag = ad[0]
+		attr.data = ad[1:]
+	} else {
+		attr.data = ad
+	}
+	p.attrs = append(p.attrs, attr)
 }
 
-func (p *Packet) parseVSA(rb *rBuf) (vid VendorID, err error) {
+func (p *Packet) parseVSA(adata []byte) (vid VendorID, err error) {
 	var (
-		al    byte       // attr len
-		alInt int        // calculated attr len
-		nrb   *rBuf      // nested read buffer
-		vt    VendorType // vendor type
-		vl    byte       // vendor len
-		vlInt int        // calculated vendor len
-		ad    *AttrData  // attr data
-		tg    byte       // attr tag
+		rb   *rBuf  // nested read buffer
+		vt   byte   // vendor type
+		vd   []byte // vendor data
+		attr *Attr  // attribute
 	)
 
-	defer func() {
-		var ok bool
-		if r := recover(); r != nil {
-			if err, ok = r.(error); !ok {
-				err = errors.New("Panic in parseVSA")
-			}
-		}
-		if err != nil {
-			vid = 0
-		}
-	}()
-	al = rb.getByte()
-	if alInt = int(al) - 6; alInt < 0 {
-		err = errors.New("Attr len error")
+	if len(adata) < 6 {
+		err = errors.New("VSA too short")
 		return
 	}
-	vid = VendorID(rb.getUInt32())
-	nrb = rb.nestedBuf(alInt)
-	for nrb.getLeft() >= 2 {
-		vt = VendorType(nrb.getByte())
-		vl = nrb.getByte()
-		if vlInt = int(vl) - 2; vlInt < 0 {
-			err = errors.New("Attr len error")
+	vid = VendorID(binary.BigEndian.Uint32(adata))
+	rb = newBuf(adata[4:])
+	for rb.getLeft() >= 2 {
+		if vt, vd, err = rb.getAttr(); err != nil {
 			return
 		}
-		ad = GetVSAByAttr(vid, vt)
-		tg = 0
-		if ad.IsTagged() {
-			tg = nrb.getByte()
-			if vlInt--; vlInt < 0 {
-				err = errors.New("Attr len error")
-				return
-			}
-		}
-		p.attrs = append(p.attrs, &Attr{
+		attr = &Attr{
 			atype: AttrVSA,
-			alen:  vl + 6, // TODO: detect packed VSAs
+			alen:  byte(len(vd) + 8), // TODO: detect packed VSAs
 			vid:   vid,
-			vtype: vt,
-			vlen:  vl,
-			tag:   tg,
-			data:  nrb.getBytes(vlInt),
-			ad:    ad,
+			vtype: VendorType(vt),
+			vlen:  byte(len(vd) + 2),
+			ad:    GetVSAByAttr(vid, VendorType(vt)),
 			pkt:   p,
-		})
+		}
+		if attr.ad != nil && attr.ad.IsTagged() {
+			attr.tag = vd[0]
+			attr.data = vd[1:]
+		} else {
+			attr.data = vd
+		}
+		p.attrs = append(p.attrs, attr)
 	}
 	return
 }
