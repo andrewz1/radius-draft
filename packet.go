@@ -3,7 +3,12 @@ package radius
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"net"
+	"time"
 )
+
+var errInvalidFormat = errors.New("Invalid data format")
 
 type RadiusCode byte
 
@@ -45,6 +50,52 @@ type Packet struct {
 	secret []byte      // Radius shared secret
 	data   []byte      // Raw packet data
 	udata  interface{} // User data
+	reply  bool        // Is this reply
+}
+
+func (rc RadiusCode) String() string {
+	switch rc {
+	case AccessRequest:
+		return "AccessRequest"
+	case AccessAccept:
+		return "AccessAccept"
+	case AccessReject:
+		return "AccessReject"
+	case AccountingRequest:
+		return "AccountingRequest"
+	case AccountingResponse:
+		return "AccountingResponse"
+	case AccountingStatus:
+		return "AccountingStatus"
+	case PasswordRequest:
+		return "PasswordRequest"
+	case PasswordAck:
+		return "PasswordAck"
+	case PasswordReject:
+		return "PasswordReject"
+	case AccountingMessage:
+		return "AccountingMessage"
+	case AccessChallenge:
+		return "AccessChallenge"
+	case StatusServer:
+		return "StatusServer"
+	case StatusClient:
+		return "StatusClient"
+	case DisconnectRequest:
+		return "DisconnectRequest"
+	case DisconnectACK:
+		return "DisconnectACK"
+	case DisconnectNAK:
+		return "DisconnectNAK"
+	case CoARequest:
+		return "CoARequest"
+	case CoAACK:
+		return "CoAACK"
+	case CoANAK:
+		return "CoANAK"
+	default:
+		return fmt.Sprintf("Unknown(%d)", rc)
+	}
 }
 
 func ParsePacket(buf []byte) (pkt *Packet, err error) {
@@ -188,4 +239,227 @@ func (p *Packet) SetSecret(secret []byte) {
 		return
 	}
 	p.secret = secret
+}
+
+func (p *Packet) GetCode() RadiusCode {
+	if p == nil {
+		return RadiusCode(0)
+	}
+	return p.code
+}
+
+func (p *Packet) SetCode(code RadiusCode) {
+	if p == nil {
+		return
+	}
+	p.code = code
+}
+
+func (p *Packet) GetVIDs() []VendorID {
+	if p == nil {
+		return nil
+	}
+	return p.vids
+}
+
+func (p *Packet) AddAttrSimple(attr *Attr) {
+	if p == nil {
+		return
+	}
+	attr.pkt = p
+	p.attrs = append(p.attrs, attr)
+}
+
+func attrConv(ad AttrDType, v interface{}) ([]byte, error) {
+	switch ad {
+	case DTypeRaw:
+		av, ok := v.([]byte)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		return av, nil
+	case DTypeString:
+		av, ok := v.(string)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		return []byte(av), nil
+	case DTypeIP4:
+		av, ok := v.(net.IP)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		if av = av.To4(); av == nil {
+			return nil, errInvalidFormat
+		}
+		return av, nil
+	case DTypeInt:
+		av, ok := v.(uint32)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		b := make([]byte, 4)
+		binary.BigEndian.PutUint32(b, av)
+		return b, nil
+	case DTypeInt64:
+		av, ok := v.(uint64)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		b := make([]byte, 8)
+		binary.BigEndian.PutUint64(b, av)
+		return b, nil
+	case DTypeDate:
+		switch v.(type) {
+		case time.Time:
+			av := v.(time.Time)
+			b := make([]byte, 4)
+			binary.BigEndian.PutUint32(b, uint32(av.Unix()))
+			return b, nil
+		case int64:
+			av := v.(int64)
+			b := make([]byte, 4)
+			binary.BigEndian.PutUint32(b, uint32(av))
+			return b, nil
+		default:
+			return nil, errInvalidFormat
+		}
+	case DTypeIfID:
+		av, ok := v.(uint64)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		b := make([]byte, 8)
+		binary.BigEndian.PutUint64(b, av)
+		return b, nil
+	case DTypeIP6:
+		av, ok := v.(net.IP)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		if av = av.To16(); av == nil {
+			return nil, errInvalidFormat
+		}
+		return av, nil
+	case DTypeByte:
+		av, ok := v.(byte)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		return []byte{av}, nil
+	case DTypeEth:
+		av, ok := v.(net.HardwareAddr)
+		if !ok || len(av) != 6 {
+			return nil, errInvalidFormat
+		}
+		return av, nil
+	case DTypeShort:
+		av, ok := v.(uint16)
+		if !ok {
+			return nil, errInvalidFormat
+		}
+		b := make([]byte, 2)
+		binary.BigEndian.PutUint16(b, av)
+		return b, nil
+	}
+	return nil, errInvalidFormat
+}
+
+func (p *Packet) AddAttr(atype AttrType, vid VendorID, vtype VendorType, tag byte, data interface{}) error {
+	var err error
+
+	if p == nil {
+		return errors.New("Packet empty")
+	}
+	attr := &Attr{
+		atype: atype,
+		ad:    GetAttrByAttrFull(atype, vid, vtype),
+	}
+	if attr.IsVSA() {
+		attr.vid = vid
+		attr.vtype = vtype
+	}
+	if attr.ad == nil {
+		// for unknown attrs only raw data can be set
+		av, ok := data.([]byte)
+		if !ok {
+			return errInvalidFormat
+		}
+		attr.data = av
+	} else {
+		if attr.data, err = attrConv(attr.ad.dtype, data); err != nil {
+			return err
+		}
+		if attr.ad.IsTagged() {
+			attr.tag = tag
+		}
+	}
+	if attr.IsVSA() {
+		attr.alen = byte(len(attr.data) + 8)
+		attr.vlen = byte(len(attr.data) + 2)
+	} else {
+		attr.alen = byte(len(attr.data) + 2)
+	}
+	attr.pkt = p
+	p.attrs = append(p.attrs, attr)
+	return nil
+}
+
+func (p *Packet) String() (r string) {
+	if p == nil {
+		return
+	}
+	r += fmt.Sprintf("Code: %s, ID: %d, Len: %d, Auth: %02x\n", p.code, p.id, p.len, p.auth)
+	for _, attr := range p.attrs {
+		if attr.ad != nil {
+			r += fmt.Sprintf("  %s: ", attr.ad.name)
+		} else {
+			if attr.atype == AttrVSA {
+				r += fmt.Sprintf("  VSA-%d-%d: ", attr.vid, attr.vtype)
+			} else {
+				r += fmt.Sprintf("  Attr-%d: ", attr.atype)
+			}
+		}
+		if attr.ad.IsTagged() {
+			r += fmt.Sprintf("[%d] ", attr.tag)
+		}
+		ed := attr.GetEData()
+		switch ed.(type) {
+		case []byte:
+			r += fmt.Sprintf("%02x", ed.([]byte))
+		default:
+			r += fmt.Sprintf("%v", ed)
+		}
+		r += fmt.Sprint("\n")
+	}
+	return
+}
+
+func (p *Packet) Reply() *Packet {
+	if p == nil {
+		return nil
+	}
+	return &Packet{
+		id:     p.id,
+		auth:   p.auth,
+		vids:   p.vids,
+		secret: p.secret,
+		udata:  p.udata,
+		reply:  true,
+	}
+}
+
+func (p *Packet) BufCalc() (sum int) {
+	if p == nil {
+		return
+	}
+	sum = MinPLen
+	for _, a := range p.attrs {
+		sum += int(a.alen)
+	}
+	return roundup64(sum)
+}
+
+func (p *Packet) Serialize() []byte {
+	return nil
 }
