@@ -130,20 +130,20 @@ func MustAddAttrEnc(name string, atype AttrType, dtype AttrDType, enc AttrEnc) {
 	MustAddAttrFull(name, atype, 0, 0, dtype, enc, false)
 }
 
-func AddAttrTag(name string, atype AttrType, dtype AttrDType, tagged bool) error {
-	return AddAttrFull(name, atype, 0, 0, dtype, AttrEncNone, tagged)
+func AddAttrTag(name string, atype AttrType, dtype AttrDType) error {
+	return AddAttrFull(name, atype, 0, 0, dtype, AttrEncNone, true)
 }
 
-func MustAddAttrTag(name string, atype AttrType, dtype AttrDType, tagged bool) {
-	MustAddAttrFull(name, atype, 0, 0, dtype, AttrEncNone, tagged)
+func MustAddAttrTag(name string, atype AttrType, dtype AttrDType) {
+	MustAddAttrFull(name, atype, 0, 0, dtype, AttrEncNone, true)
 }
 
-func AddAttrEncTag(name string, atype AttrType, dtype AttrDType, enc AttrEnc, tagged bool) error {
-	return AddAttrFull(name, atype, 0, 0, dtype, enc, tagged)
+func AddAttrEncTag(name string, atype AttrType, dtype AttrDType, enc AttrEnc) error {
+	return AddAttrFull(name, atype, 0, 0, dtype, enc, true)
 }
 
-func MustAddAttrEncTag(name string, atype AttrType, dtype AttrDType, enc AttrEnc, tagged bool) {
-	MustAddAttrFull(name, atype, 0, 0, dtype, enc, tagged)
+func MustAddAttrEncTag(name string, atype AttrType, dtype AttrDType, enc AttrEnc) {
+	MustAddAttrFull(name, atype, 0, 0, dtype, enc, true)
 }
 
 func AddVSA(name string, vid VendorID, vtype VendorType, dtype AttrDType) error {
@@ -162,20 +162,20 @@ func MustAddVSAEnc(name string, vid VendorID, vtype VendorType, dtype AttrDType,
 	MustAddAttrFull(name, AttrVSA, vid, vtype, dtype, enc, false)
 }
 
-func AddVSATag(name string, vid VendorID, vtype VendorType, dtype AttrDType, tagged bool) error {
-	return AddAttrFull(name, AttrVSA, vid, vtype, dtype, AttrEncNone, tagged)
+func AddVSATag(name string, vid VendorID, vtype VendorType, dtype AttrDType) error {
+	return AddAttrFull(name, AttrVSA, vid, vtype, dtype, AttrEncNone, true)
 }
 
-func MustAddVSATag(name string, vid VendorID, vtype VendorType, dtype AttrDType, tagged bool) {
-	MustAddAttrFull(name, AttrVSA, vid, vtype, dtype, AttrEncNone, tagged)
+func MustAddVSATag(name string, vid VendorID, vtype VendorType, dtype AttrDType) {
+	MustAddAttrFull(name, AttrVSA, vid, vtype, dtype, AttrEncNone, true)
 }
 
-func AddVSAEncTag(name string, vid VendorID, vtype VendorType, dtype AttrDType, enc AttrEnc, tagged bool) error {
-	return AddAttrFull(name, AttrVSA, vid, vtype, dtype, enc, tagged)
+func AddVSAEncTag(name string, vid VendorID, vtype VendorType, dtype AttrDType, enc AttrEnc) error {
+	return AddAttrFull(name, AttrVSA, vid, vtype, dtype, enc, true)
 }
 
-func MustAddVSAEncTag(name string, vid VendorID, vtype VendorType, dtype AttrDType, enc AttrEnc, tagged bool) {
-	MustAddAttrFull(name, AttrVSA, vid, vtype, dtype, enc, tagged)
+func MustAddVSAEncTag(name string, vid VendorID, vtype VendorType, dtype AttrDType, enc AttrEnc) {
+	MustAddAttrFull(name, AttrVSA, vid, vtype, dtype, enc, true)
 }
 
 func GetAttrByName(name string) *AttrData {
