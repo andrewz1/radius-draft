@@ -50,7 +50,6 @@ type Packet struct {
 func ParsePacket(buf []byte) (pkt *Packet, err error) {
 	var (
 		pl   int                   // packet len
-		pd   []byte                // packet raw data
 		rb   *rBuf                 // read buffer
 		at   byte                  // attr type
 		ad   []byte                // attr data
@@ -67,18 +66,17 @@ func ParsePacket(buf []byte) (pkt *Packet, err error) {
 		err = errors.New("Packet len error")
 		return
 	}
-	pd = append([]byte(nil), buf[:pl]...)
 	pkt = &Packet{
-		code: RadiusCode(pd[0]),
-		id:   pd[1],
+		code: RadiusCode(buf[0]),
+		id:   buf[1],
 		len:  uint16(pl),
-		auth: pd[4:20],
-		data: pd,
+		auth: buf[4:20],
+		data: buf,
 	}
 	if pl == MinPLen {
 		return
 	}
-	rb = newBuf(pd)
+	rb = newBuf(buf[MinPLen:])
 	defer func() {
 		if err != nil && pkt != nil {
 			for _, a := range pkt.attrs {
